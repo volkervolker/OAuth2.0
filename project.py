@@ -3,7 +3,7 @@ app = Flask(__name__)
 
 from sqlalchemy import create_engine, asc
 from sqlalchemy.orm import sessionmaker
-from database_setup import Base, Restaurant, MenuItem
+from database_setup import Base, Restaurant, MenuItem, User
 
 from flask import session as login_session
 import random, string
@@ -76,6 +76,11 @@ def gconnect():
     login_session['username'] = data['name']
     login_session['picture'] = data['picture']
     login_session['email'] = data['email']
+
+    user_id = getUserID(login_session['email'])
+    if user_id is None:
+        user_id = createUser(login_session)
+    login_session['user_id'] = user_id
 
     output = ''
     output += '<h1>Welcome, '
@@ -153,13 +158,13 @@ def restaurantsJSON():
 @app.route('/restaurant/')
 def showRestaurants():
   restaurants = session.query(Restaurant).order_by(asc(Restaurant.name))
-  return render_template('restaurants.html', restaurants = restaurants)
+  return render_template('publicrestaurants.html', restaurants = restaurants)
 
 #Create a new restaurant
 @app.route('/restaurant/new/', methods=['GET','POST'])
 def newRestaurant():
   if request.method == 'POST':
-      newRestaurant = Restaurant(name = request.form['name'])
+      newRestaurant = Restaurant(name = request.form['name'], user_id=login_session['user_id'])
       session.add(newRestaurant)
       flash('New Restaurant %s Successfully Created' % newRestaurant.name)
       session.commit()
@@ -171,6 +176,10 @@ def newRestaurant():
 @app.route('/restaurant/<int:restaurant_id>/edit/', methods = ['GET', 'POST'])
 def editRestaurant(restaurant_id):
   editedRestaurant = session.query(Restaurant).filter_by(id = restaurant_id).one()
+  if login_session['user_id'] is not editedRestaurant.user_id:
+      items = session.query(MenuItem).filter_by(restaurant_id = restaurant_id).all()
+      creator = getUserInfo(editedRestaurant.user_id)
+      return render_template('publicmenu.html', items = items, restaurant = editedRestaurant, creator = creator)
   if request.method == 'POST':
       if request.form['name']:
         editedRestaurant.name = request.form['name']
@@ -184,6 +193,10 @@ def editRestaurant(restaurant_id):
 @app.route('/restaurant/<int:restaurant_id>/delete/', methods = ['GET','POST'])
 def deleteRestaurant(restaurant_id):
   restaurantToDelete = session.query(Restaurant).filter_by(id = restaurant_id).one()
+  if login_session['user_id'] is not restaurantToDelete.user_id:
+    items = session.query(MenuItem).filter_by(restaurant_id = restaurant_id).all()
+    creator = getUserInfo(restaurantToDelete.user_id)
+    return render_template('publicmenu.html', items = items, restaurant = restaurantToDelete, creator = creator)
   if request.method == 'POST':
     session.delete(restaurantToDelete)
     flash('%s Successfully Deleted' % restaurantToDelete.name)
@@ -198,6 +211,9 @@ def deleteRestaurant(restaurant_id):
 def showMenu(restaurant_id):
     restaurant = session.query(Restaurant).filter_by(id = restaurant_id).one()
     items = session.query(MenuItem).filter_by(restaurant_id = restaurant_id).all()
+    if login_session['user_id'] is not restaurant.user_id:
+        creator = getUserInfo(restaurant.user_id)
+        return render_template('publicmenu.html', items = items, restaurant = restaurant, creator = creator)
     return render_template('menu.html', items = items, restaurant = restaurant)
      
 
@@ -206,6 +222,8 @@ def showMenu(restaurant_id):
 @app.route('/restaurant/<int:restaurant_id>/menu/new/',methods=['GET','POST'])
 def newMenuItem(restaurant_id):
   restaurant = session.query(Restaurant).filter_by(id = restaurant_id).one()
+  if login_session['user_id'] is not restaurant.user_id:
+            return redirect(url_for('showMenu', restaurant_id = restaurant_id))
   if request.method == 'POST':
       newItem = MenuItem(name = request.form['name'], description = request.form['description'], price = request.form['price'], course = request.form['course'], restaurant_id = restaurant_id)
       session.add(newItem)
@@ -221,6 +239,8 @@ def editMenuItem(restaurant_id, menu_id):
 
     editedItem = session.query(MenuItem).filter_by(id = menu_id).one()
     restaurant = session.query(Restaurant).filter_by(id = restaurant_id).one()
+    if login_session['user_id'] is not restaurant.user_id:
+            return redirect(url_for('showMenu', restaurant_id = restaurant_id))
     if request.method == 'POST':
         if request.form['name']:
             editedItem.name = request.form['name']
@@ -242,6 +262,8 @@ def editMenuItem(restaurant_id, menu_id):
 @app.route('/restaurant/<int:restaurant_id>/menu/<int:menu_id>/delete', methods = ['GET','POST'])
 def deleteMenuItem(restaurant_id,menu_id):
     restaurant = session.query(Restaurant).filter_by(id = restaurant_id).one()
+    if login_session['user_id'] is not restaurant.user_id:
+            return redirect(url_for('showMenu', restaurant_id = restaurant_id))
     itemToDelete = session.query(MenuItem).filter_by(id = menu_id).one() 
     if request.method == 'POST':
         session.delete(itemToDelete)
@@ -252,7 +274,23 @@ def deleteMenuItem(restaurant_id,menu_id):
         return render_template('deleteMenuItem.html', item = itemToDelete)
 
 
+def createUser(login_session):
+    newUser = User(name= login_session['username'], email= login_session['email'], picture = login_session['picture'])
+    session.add(newUser)
+    session.commit()
+    user = session.query(User).filter_by(email = login_session['email']).one()
+    return user.id
 
+def getUserInfo(user_id):
+    user = session.query(User).filter_by(id = user_id).one()
+    return user
+
+def getUserID(email):
+    try:
+        user = session.query(User).filter_by(email = email).one()
+        return user.id
+    except:
+        return None
 
 if __name__ == '__main__':
   app.secret_key = 'super_secret_key'
